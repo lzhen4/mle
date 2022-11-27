@@ -1,0 +1,1432 @@
+---
+title: "JASA-08348: Learning and Temporal Discrimination"
+author: "Leslie Zhen"
+date: "`r format(Sys.Date())`"
+output:
+   html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    css: style.css
+---
+
+
+```{r setup, include=FALSE, cache=F}
+knitr::opts_chunk$set(fig.width=6, fig.height=4, fig.path='Figs/', echo=TRUE, tidy=TRUE, message=F, warning=F, cache=F) # cache = T does not rerun everything unless something has changed.  esp useful if you are doing something like bootstraping with lots of iterations.
+```
+
+Install libraries.
+```{r}
+rm(list = ls())
+
+library(quickpsy)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+#library(lcsm)
+library(ggplot2)
+library(tidyr)
+library(reticulate)
+library(rstatix)
+library(readxl)
+library(ggpubr)
+library(ez)
+library(viridis)
+library(hrbrthemes)
+library(ggstatsplot)
+library(rstantools)
+library(PMCMRplus)
+
+#library(stringr)
+#library(lme4)
+#library(lmerTest)
+#library(emmeans)
+#library(kableExtra)
+#options(knitr.table.format = "html")
+# library(ggrepel)
+# library(plotly)
+# library(EnvStats)
+# library(mice) # imputation
+# library(VIM)
+# library(naniar)
+# library(TeachingDemos)
+# library(mitml)
+# library(Rcpp) # mandatory for MICE
+# library(singcar)
+# library(lattice) # plotting
+
+# change font family
+library(extrafont)
+loadfonts(device = "win")
+windowsFonts()
+```
+
+# 1. Pre-process data for quickpsy.
+```{r}
+audiotempraw <-read.csv('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\1_raw_data\\audiotempraw.csv')
+fdtraw <-read.csv('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\1_raw_data\\fdtraw.csv')
+fdraw <-read.csv('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\1_raw_data\\fdraw.csv')
+targetraw <-read.csv('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\1_raw_data\\targetraw.csv')
+
+audiotempraw2 <- audiotempraw %>%
+  mutate(session = case_when(session == 1 ~ 0, # Re-code exposure phase as Session 0
+                             TRUE ~ as.numeric(as.character(session))),
+         participant = as.factor(participant),
+         session = as.factor(session)) %>%
+  rename(location = "Where.are.you.doing.this.experiment..home.office.etc...",
+         noise = "How.noisy.is.your.current.environment.from.1.to.10..1.silent.10.very.noisy..",
+         exp = "expName",
+         os = "OS") %>%
+  reorder_levels(group, order = c("audio_temp", "fdt", "fd", "control")) %>%
+  mutate(group = as.factor(group),
+         session = as.factor(session),
+         group = recode_factor(group, audio_temp = "Interval Exposure",
+                               fdt = "FDT", 
+                               fd = "FD", 
+                               control = "Control"))
+
+fdtraw2 <- fdtraw %>%
+  mutate(session = case_when(session == 1 ~ 0,
+                             TRUE ~ as.numeric(as.character(session))),
+         participant = as.factor(participant),
+         session = as.factor(session)) %>%
+  rename(location = "Where.are.you.doing.this.experiment..home.office.etc...",
+         noise = "How.noisy.is.your.current.environment.from.1.to.10..1.silent.10.very.noisy..",
+         exp = "expName",
+         os = "OS") %>%
+  reorder_levels(group, order = c("audio_temp", "fdt", "fd", "control")) %>%
+  mutate(group = as.factor(group),
+         session = as.factor(session),
+         group = recode_factor(group, audio_temp = "Interval Exposure",
+                               fdt = "FDT", 
+                               fd = "FD", 
+                               control = "Control"))
+  
+
+fdraw2 <- fdraw %>%
+  mutate(session = case_when(session == 1 ~ 0,
+                             TRUE ~ as.numeric(as.character(session))),
+         participant = as.factor(participant),
+         session = as.factor(session)) %>%
+  rename(location = "Where.are.you.doing.this.experiment..home.office.etc...",
+         noise = "How.noisy.is.your.current.environment.from.1.to.10..1.silent.10.very.noisy..",
+         exp = "expName",
+         os = "OS") %>%
+  reorder_levels(group, order = c("audio_temp", "fdt", "fd", "control")) %>%
+  mutate(group = as.factor(group),
+         session = as.factor(session),
+         group = recode_factor(group, audio_temp = "Interval Exposure",
+                               fdt = "FDT", 
+                               fd = "FD", 
+                               control = "Control"))
+
+targetraw2 <- targetraw %>%
+  mutate(participant = as.factor(participant),
+         session = as.factor(session)) %>%
+  rename(location = "Where.are.you.doing.this.experiment..home.office.etc...",
+         noise = "How.noisy.is.your.current.environment.from.1.to.10..1.silent.10.very.noisy..",
+         exp = "expName",
+         os = "OS") %>%
+  select(-exclude, -exclude_reason, -techerror) %>%
+  reorder_levels(group, order = c("audio_temp", "fdt", "fd", "control")) %>%
+  mutate(group = as.factor(group),
+         session = as.factor(session),
+         group = recode_factor(group, audio_temp = "Interval Exposure",
+                               fdt = "FDT", 
+                               fd = "FD", 
+                               control = "Control"))
+```
+
+## Fit the logistic functions. 
+- Traditional method of constant stimuli.
+
+```{r}
+# Combine dataframes. Separate frequency from temporal experiments for DL calculation in Step 2.
+freq <- rbind(fdtraw2, fdraw2)
+temp <- rbind(audiotempraw2, targetraw2)
+
+# Fit logistic function to frequency experiments.
+freq_fit <- quickpsy(d = freq,
+                x = cv, # the comparison value
+                k = count_as_longer, # response is longer
+                grouping = c("participant", "session"),
+                fun = logistic_fun,
+                bootstrap = "none", 
+                thresholds = TRUE)
+
+# Fit logistic function to temporal experiments.
+temp_fit <- quickpsy(d = temp,
+                x = cv,
+                k = count_as_longer,
+                grouping = c("participant", "session"),
+                fun = logistic_fun,
+                bootstrap = "none",
+                thresholds = TRUE)
+
+# Extract fitted parameters p1 and p2 for DL calculation in Step 2.
+freq_par <- freq_fit$par
+temp_par <- temp_fit$par
+
+# write fitted parameters to csv for DL computation in python
+write.csv(freq_par, "C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\2_quickpsy\\freq_par.csv")
+write.csv(temp_par, "C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\2_quickpsy\\temp_par.csv")
+```
+
+
+# 2. Plot psychometric functions on target task performance.
+
+## Pre-screen for flat psychometric functions (temporal tasks).
+
+### Plot everyone's target task psychometric functions for all sessions.
+```{r}
+# Plot everyone's psychometric functions for all sessions.
+plot(temp_fit, color=session) + 
+  labs(y="Probability of 'Long' Response", x="Comparison (ms)") + 
+  theme_bw(base_size = 22) + ylim(0,1) +
+  scale_x_continuous(breaks = c(79, 85, 91, 97, 103, 109, 115, 121)) + 
+  #scale_color_manual(values = c("#808080", "#000000")) + # custom colors
+  labs(colour = "Session") # legend title
+
+
+# That's a bit much. Let's plot individual participant's psychometric functions.
+```
+
+### Plot each individual's psychometric functions.
+- Manual screen each participants target task sessions for flat psychometric functions.
+```{r}
+unique(temp$participant) # get participant list
+
+indiv_temp <- temp %>%
+  filter(participant == "25_22") # manually change participant ID and inspect each fit
+
+# Fit logistic function to temporal experiments.
+temp_fit_indiv <- quickpsy(d = indiv_temp,
+                x = cv,
+                k = count_as_longer,
+                grouping = c("session"),
+                fun = logistic_fun,
+                bootstrap = "none", 
+                thresholds = TRUE)
+
+# Plot individual functions.
+ggplot() +
+  #facet_wrap(~ participant) +
+  geom_line(data = temp_fit_indiv$curves, 
+            aes(x = x, y = y, color = session), lwd = .2, alpha = .4) +
+  geom_line(data = temp_fit_indiv$curves, aes(x = x, y = y, color = session)) +
+  geom_point(data = temp_fit_indiv$averages, aes(x = cv, y = prob), size = 2) +
+  geom_point(data = temp_fit_indiv$averages, aes(x = cv, y = prob, color = session)) + 
+  scale_x_continuous(breaks = c(79, 85, 91, 97, 103, 109, 115, 121)) +
+  scale_y_continuous(breaks = c(0, 0.25, 0.50, 0.75, 1.0)) +
+  coord_cartesian(ylim = c(0, 1)) + # restrict visible range from 0 to 1
+  labs(y="Probability of 'Long' Response", x="Comparison (ms)") + 
+  theme_bw()
+```
+
+## Pre-screen for flat psychometric functions (frequency tasks).
+```{r}
+unique(freq$participant) # get participant list
+
+freq_indiv <- freq %>%
+  filter(participant == "03_03") # manually change participant ID and inspect each fit
+
+# Fit logistic function to temporal experiments.
+freq_fit_indiv <- quickpsy(d = freq_indiv,
+                x = cv,
+                k = count_as_longer,
+                grouping = c("session"),
+                fun = logistic_fun,
+                bootstrap = "none", 
+                thresholds = TRUE)
+
+# Plot individual functions.
+ggplot() +
+  #facet_wrap(~ participant) +
+  geom_line(data = freq_fit_indiv$curves, 
+            aes(x = x, y = y, color = session), lwd = .2, alpha = .4) +
+  geom_line(data = freq_fit_indiv$curves, aes(x = x, y = y, color = session)) +
+  geom_point(data = freq_fit_indiv$averages, aes(x = cv, y = prob), size = 2) +
+  geom_point(data = freq_fit_indiv$averages, aes(x = cv, y = prob, color = session)) + 
+  scale_x_continuous(breaks = c(79, 85, 91, 97, 103, 109, 115, 121)) +
+  scale_y_continuous(breaks = c(0, 0.25, 0.50, 0.75, 1.0)) +
+  coord_cartesian(ylim = c(0, 1)) + # restrict visible range from 0 to 1
+  labs(y="Probability of 'Long' Response", x="Comparison (ms)") + 
+  theme_bw()
+```
+
+## Removed target task outliers.
+```{r}
+# Remove target task outliers
+targetraw2.now <- targetraw2 %>%
+  mutate(outlier = case_when(participant == "19_19" ~ 1, # flat psychometric functions
+                             participant == "25_22" ~ 1,
+                             participant == "30_28" ~ 1,
+                             participant == "40_37" ~ 1,
+                             participant == "51_47" ~ 1,
+                             participant == "57_53" ~ 1,
+                             participant == "60_56" ~ 1,
+                             participant == "80_77" ~ 1,
+                             participant == "82_78" ~ 1,
+                             participant == "84_80" ~ 1,
+                             participant == "63_58" & session == 1 ~ 1,
+                             participant == "63_58" & session == 2 ~ 1,
+                             
+                             participant == "48_44" & session == 1 ~ 1, # tech error
+                             participant == "73_73" & session == 4 ~ 1,
+                             participant == "74_69" & session == 5 ~ 1,
+                             
+                             participant == "03_03" & session == 1 ~ 1, # dl > 1.5*IQR and > 25ms
+                             participant == "05_05" & session == 1 ~ 1,
+                             participant == "05_05" & session == 2 ~ 1,
+                             participant == "05_05" & session == 4 ~ 1,
+                             participant == "07_07" & session == 1 ~ 1,
+                             participant == "48_44" & session == 3 ~ 1,
+                             participant == "48_44" & session == 4 ~ 1,
+                             participant == "48_44" & session == 5 ~ 1,
+                             participant == "54_50" & session == 1 ~ 1,
+                             participant == "54_50" & session == 3 ~ 1,
+                             participant == "62_61" & session == 1 ~ 1,
+                             participant == "66_62" & session == 1 ~ 1,
+                             participant == "71_66" & session == 1 ~ 1,
+                             
+                             TRUE ~ 0)) %>%
+  filter(outlier == 0) # keep only non-outliers
+
+# Grab sessions 1 and 5 for plotting
+targetraw2.now <- targetraw2.now %>%
+  filter(session == 1 | session == 5)
+
+# Determine sample size for each group
+targetraw2.now %>% 
+  group_by(group, session) %>%
+  summarise(n_distinct(participant))
+
+```
+
+## Re-fit the logistic function to the target task with outliers removed.
+```{r}
+# fit function for each group
+target_fit_group <- quickpsy(d = targetraw2.now, 
+                x = cv,
+                k = count_as_longer, 
+                grouping = c("session", "group"), # fit function for each group
+                fun = logistic_fun, 
+                bootstrap = "none", 
+                thresholds = TRUE) # get thresholds
+
+# fit function for each participant
+target_fit_sub <- quickpsy(d = targetraw2.now, 
+                x = cv,
+                k = count_as_longer, 
+                grouping = c("session", "participant"), # fit function for each participant
+                fun = logistic_fun, 
+                bootstrap = "none", 
+                thresholds = TRUE) # get thresholds
+
+
+target_fit_group$deviance
+target_fit_sub$deviance
+
+fit_parm_group <- target_fit_group$par # p1 = location (where midpoint occurs, so p(long) = 0.5); p2 = slope (how steeply function rises)
+fit_parm_sub <- target_fit_sub$par
+
+# write out fit parameters for use later in lieu of running the time-intensive quickpsy function
+#write.xlsx(fit_parm_group,"C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\fit_parm_group.xlsx", rowNames = FALSE)
+#write.xlsx(fit_parm_sub,"C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\fit_parm_sub.xlsx", rowNames = FALSE)
+```
+
+## Visualize target task psychometric functions.
+```{r}
+plot(target_fit_group, color=session) + 
+  labs(y="Probability of 'Long' Response", x="Comparison (ms)") + 
+  theme_bw(base_size = 22) + ylim(0,1) +
+  scale_x_continuous(breaks = c(79, 85, 91, 97, 103, 109, 115, 121)) + 
+  scale_color_manual(values = c("#808080", "#000000")) + # custom colors
+  labs(colour = "Session") # legend title
+
+ggplot() +
+  facet_wrap(~ group) +
+  geom_line(data = target_fit_group$curves, 
+            aes(x = x, y = y, color = session), lwd = .2, alpha = .4) +
+  geom_line(data = target_fit_group$curves, aes(x = x, y = y, color = session)) +
+  geom_point(data = target_fit_group$averages, aes(x = cv, y = prob), size = 2) +
+  geom_point(data = target_fit_group$averages, aes(x = cv, y = prob, color = session)) + 
+  scale_x_continuous(breaks = c(79, 85, 91, 97, 103, 109, 115, 121)) +
+  scale_y_continuous(breaks = c(0, 0.25, 0.50, 0.75, 1.0)) +
+  coord_cartesian(ylim = c(0, 1)) + # restrict visible range from 0 to 1
+  labs(y="Probability of 'Long' Response", x="Comparison (ms)") + 
+  theme_bw() +
+  scale_color_manual(values = c("#808080", "#000000")) # custom colors
+```
+
+## Analyze the slopes.
+```{r}
+# Uncomment if not re-running quickpy models
+fit_parm_group <-read_excel('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\2_quickpsy\\fit_parm_group.xlsx')
+fit_parm_sub <-read_excel('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\2_quickpsy\\fit_parm_sub.xlsx')
+
+thresh <- subset(fit_parm_sub, parn == "p1") # extract thresholds
+slopes <- subset(fit_parm_sub, parn == "p2") # extract slopes
+
+# calculate slope diff (session 5 - 1)
+slopes_wide <- slopes %>%
+  pivot_wider(names_from = c(session),
+              values_from = c(par, parinf, parsup)) %>%
+  mutate(slope_diff = par_5 - par_1)
+
+slopes_wide2 <- left_join(slopes_wide,
+                          targetraw2.now %>% dplyr:: select(participant, group),
+                          by = c('participant'))
+slopes_wide2 <- distinct(slopes_wide2)
+
+# demographics table for slopes
+demo_slope <- slopes_wide2 %>%
+  group_by(group) %>%
+  summarize(slope1_mn = mean(par_1, na.rm = TRUE),
+            slope1_sd = sd(par_1, na.rm = TRUE),
+            slope5_mn = mean(par_5, na.rm = TRUE),
+            slope5_sd = sd(par_5, na.rm = TRUE),
+            slope_diff_mn = mean(slope_diff, na.rm = TRUE),
+            slope_diff_med = median(slope_diff, na.rm = TRUE),
+            slope_diff_sd = sd(slope_diff, na.rm = TRUE)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+
+# stats
+slopes2 <- left_join(slopes, 
+          targetraw2.now %>% dplyr::select(participant, group),
+          by = c('participant'))
+slopes2 <- distinct(slopes2)
+
+# use effects coding
+contrasts(slopes2$group) <- contr.sum(4) # intercept = mean dl across both groups
+contrasts(slopes2$group)
+
+# 4x2 (group x session) mixed anova
+anova1 <- anova_test(data = slopes2,
+           dv = par,
+           wid = participant,
+           between = group,
+           within = session)
+anova1
+# There's an effect of session but not group. No interaction.
+```
+
+## Visualize slopes.
+```{r}
+# bar plot for change in slope
+slope_diff <- ggplot(data = demo_slope, mapping = aes(x=group, y = slope_diff_mn, fill = group)) + 
+  geom_bar(stat='identity', position = "dodge") + 
+  geom_errorbar(aes(x=group, 
+                    ymin=slope_diff_mn-slope_diff_sd, ymax=slope_diff_mn+slope_diff_sd),
+                width=0.2, colour="black", alpha=0.9, size=1) + ylim(-.05, .15) +
+  scale_fill_manual("",values = c("Interval" = "#444444", 
+                                  "FDT" = "#777777", 
+                                  "FD" = "#AAAAAA",
+                                  "Control" = "#DDDDDD")) +
+  labs(y = "\u394 Slope (5 - 1)", x = "Group") + 
+  geom_hline(yintercept = 0, linetype = "solid", color = "#000000", size = 1) + 
+  theme_pubr(base_size = 18)
+
+# bar plot for slopes at sessions 1 and 5
+summary <- ezStats(data = slopes2, dv= par, wid = participant, between=c(group, session)) # get SDs for plotting
+
+slopes_1_5 <- ggplot(summary, aes(x = session, y = Mean, fill = group)) +
+  geom_bar(position="dodge", stat="identity") + 
+  scale_fill_manual("",values = c("Interval" = "#444444", 
+                                  "FDT" = "#777777", 
+                                  "FD" = "#AAAAAA",
+                                  "Control" = "#DDDDDD")) +
+  labs(y = "Slope", x = "Session") +
+  scale_y_continuous(breaks = c(0,0.1,0.2,0.3)) +
+  geom_errorbar(aes(ymin = Mean-SD, ymax = Mean+SD),position=position_dodge(0.90), width = 0.2) +
+  theme_pubr(base_size = 18)
+
+# combine plots
+slopes_all <- ggarrange(slopes_1_5, #+ rremove("xlab")
+                        slope_diff,
+                    labels = c("A", "B"),
+                    ncol = 2, nrow = 1,
+                    common.legend = TRUE,
+                    legend = "bottom")
+slopes_all
+```
+
+
+
+
+# 3. Compute difference limens, Weber fraction, PSE.
+```{r}
+rm(list = ls())
+
+freq_par <-read.csv('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\2_quickpsy\\freq_par.csv')
+temp_par <- read.csv('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\2_quickpsy\\temp_par.csv')
+supp <- read.csv('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\3_dl_calc\\als_supp.csv') # supplementary data (e.g., surroundings, noise level)
+
+supp <- supp %>%
+  mutate(session = case_when(exp == "freq_only" & session == 1 ~ 0, # Re-code exposure phase as 0
+                             exp == "freq_temporal" & session == 1 ~ 0,
+                             exp == "audio_temporal" & session == 1 ~ 0,
+                             TRUE ~ as.numeric(as.character(session))))
+  
+freq_standard = 1000 # standard frequency in Hz
+temp_standard = 100 # duration in ms
+
+# frequency experiments
+freq_par2 <- freq_par %>%
+  select(-X) %>%
+  spread(key = parn, value = par) %>% # split the parn column
+  mutate(d25 = (p1-(1/p2)*log((1/0.25)-1)),
+         d50 = (p1-(1/p2)*log((1/0.50)-1)), # Sanity check. Should equal p1.
+         d75 = (p1-(1/p2)*log((1/0.75)-1)),
+         dl = ((d75 - d25)/2),
+         weber = dl/freq_standard,
+         pse = d50) %>% # PSE = d50 = p1
+  select(-c(d25, d50, d75))
+
+# Temporal experiments
+temp_par2 <- temp_par %>%
+  select(-X) %>%
+  spread(key = parn, value = par) %>% # split the parn column
+  mutate(d25 = (p1-(1/p2)*log((1/0.25)-1)),
+         d50 = (p1-(1/p2)*log((1/0.50)-1)), # Sanity check. Should equal p1.
+         d75 = (p1-(1/p2)*log((1/0.75)-1)),
+         dl = ((d75 - d25)/2),
+         weber = dl/temp_standard,
+         pse = d50) %>% # PSE = d50 = p1
+  select(-c(d25, d50, d75))
+```
+
+## Create single full dataset with newly calculated values.
+```{r}
+exps <- rbind(freq_par2, temp_par2)
+
+als <- left_join(supp,
+                 exps,
+                 by = c('participant', 'session'))
+
+# write data out for analysis
+#write.csv(als, "C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\als.csv")
+```
+
+
+
+
+# 4. Analyze difference limens and slopes.
+
+## Pre-process data.
+```{r}
+rm(list = ls())
+
+als <-read.csv('C:\\Users\\Leslie Zhen\\Desktop\\r_data\\mle\\als.csv')
+
+als2 <- als %>%
+  mutate(participant = as.factor(participant), 
+         group = as.factor(group),
+         session = as.factor(session),
+         exp = as.factor(exp),
+         noise = factor(noise, ordered = TRUE), # ordered categorical variable
+         flat_na = as.factor(flat_na),
+         exclude = as.factor(exclude),
+         techerror = as.factor(techerror),
+         datediff = as.numeric(datediff),
+         group = recode_factor(group, audio_temp = "Interval Exposure",
+                               fdt = "FDT", 
+                               fd = "FD", 
+                               control = "Control")) %>% # continuous time
+  reorder_levels(group, order = c("Interval Exposure", "FDT", "FD", "Control")) %>%
+  rename(slope = p2)
+
+
+# Manual data removal for the following reasons:
+# (1) Significant tech error during data collection
+# (2) Participant unreliable, determine from combination of Zoom recording, manually screened for flat psychometric function, and unusually high thresholds. Column "exclude" is coded to drop the entire participant.
+# (3) Some flat psychometric functions but otherwise reliable data. Column "flat_na" is coded to drop only the specific case rather than entire participant.
+als2 <- als2 %>%
+  mutate(dl = replace(dl, participant == "48_44" & session == 0 | participant == "48_44" & session == 1, NA), # (1)
+         dl = replace(dl, participant == "73_73" & session == 4, NA),
+         dl = replace(dl, participant == "74_69" & session == 5, NA),
+         
+         slope = replace(slope, participant == "48_44" & session == 0 | participant == "48_44" & session == 1, NA),
+         slope = replace(slope, participant == "73_73" & session == 4, NA),
+         slope = replace(slope, participant == "74_69" & session == 5, NA)) %>%
+  filter(exclude == 0) %>% # (2) 
+  mutate(flat_exclude = case_when(flat_na == 1 & exp != "target" ~ 1, # (3) if exp != target, replace exclude entire row for flat_na == 1
+                                  TRUE ~ 0)) %>%
+  filter(flat_exclude == 0) %>%
+  mutate(dl = replace(dl, exp == "target" & flat_na == 1, NA),# (3) if exp == target, replace cases with flat_na == 1 with  "na"
+         slope = replace(slope, exp == "target" & flat_na == 1, NA)) %>%
+  select(-c(flat_na, exclude, exclude_reason, techerror, flat_exclude))
+
+# overall descriptives table
+als2_descript <- als2 %>%
+  group_by(exp, group, session) %>%
+  summarize(n = n(),
+            dl_m = mean(dl, na.rm = TRUE),
+            dl_sd = sd(dl, na.rm = TRUE),
+            dl_median = median(dl, na.rm = TRUE),
+            slope_m = mean(slope, na.rm = TRUE),
+            slope_sd = sd(slope, na.rm = TRUE),
+            slope_median = median(slope, na.rm = TRUE)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+```
+
+## Data subsets.
+```{r}
+temporal <- als2 %>%
+  filter(exp == 'audio_temporal' | exp == 'target') # subset all temporal experiments
+
+freq <- als2 %>% # subset all frequency experiments
+  filter(exp == 'freq_only' | exp == 'freq_temporal') %>%
+  mutate(group = droplevels(group)) # drop unused levels
+
+
+target <- als2 %>% # subset only target task
+  filter(exp == 'target') %>%
+  mutate(session = droplevels(session))
+```
+
+
+## Assumptions
+```{r}
+# normality
+## histogram
+ggplot(temporal) +
+  aes(x = dl) +
+  geom_histogram(bins = 30L, fill = "#0c4c8a") +
+  theme_minimal() + xlab("duration dl (ms)")
+
+ggplot(temporal) +
+  aes(x = slope) +
+  geom_histogram(bins = 30L, fill = "#0c4c8a") +
+  theme_minimal() + xlab("slope")
+
+## shapiro-wilks test of normality
+temporal %>%
+  group_by(group) %>%
+  shapiro_test(dl)
+
+temporal %>%
+  group_by(group) %>%
+  shapiro_test(slope)
+# Data not normal, but there are outliers.  Remove outliers and re-run.
+```
+
+## Outlier removal.
+- Following convention from previous studies (e.g., Xu et al., 2021), outliers were removed based on difference limens, not slopes.
+### Screen for values where dl > 1.5*IQR and > 25 ms.
+```{r}
+# Visualize outliers with violin plot.
+ggbetweenstats(data = temporal, # temporal exp outliers
+               x = session, 
+               y = dl,
+               grouping.var = group,
+               outlier.coef = 1.5, # default is 1.5*IQR
+               outlier.tagging = TRUE, outlier.label = participant,
+               outlier.color = "red")
+
+ggbetweenstats(data = freq, # frequency exp outliers
+               x = group,
+               y = dl,
+               grouping.var = group,
+               outlier.coef = 1.5, # default is 1.5*IQR
+               outlier.tagging = TRUE, outlier.label = participant,
+               outlier.color = "red")
+
+# Let's also consider the subject-by-subject trajectories.
+ggplot(data = temporal, aes(x = session, y = dl, group = 1)) + geom_line() + # plot everyone's trajectories
+  facet_wrap(~participant)
+
+# The plot above is a bit much. Zoom into each person's plot.
+indiv_dl <- temporal %>%
+  filter(participant=="31_29") # Change participant ID to check each person's trajectories.
+
+pd <- position_dodge(0.1)
+ggplot(data = indiv_dl, aes(x = session, y = dl, group = group, colour = group, shape = group)) + 
+  geom_line(size = 1.1) + 
+  geom_point(size = 1) +
+  scale_colour_manual(values = c("audio_temp" = "orange", "control" = "green",  
+                                 "fd" = "blue", "fdt" = "purple")) +
+  labs(x = "session", y = "duration dl (ms)", title = "target task") + ylim(0,50)
+```
+
+### Remove outliers from the frequency experiments.
+```{r}
+#### fd task outliers & reason for removal 
+# 14_14       dl > 1.5*IQR and dl == 25ms
+
+#### fdt task outliers & reason for removal 
+# 13_13       dl > 1.5*IQR and dl == 25ms
+
+freq.now <- freq %>%
+  mutate(outlier = case_when(participant == "14_14" ~ 1,
+                             participant == "13_13" ~ 1,
+                             TRUE ~ 0),
+         dl = replace(dl, outlier == 1, NA), # replace outcomes with NA when outlier == 1
+         slope = replace(slope, outlier ==1, NA)) %>%
+  select(-c("outlier"))
+```
+
+### Remove outliers from the temporal experiments.
+```{r}
+#### target task outliers & reason for removal 
+# 03_03       extreme high dl at ses1, thereafter believable trajectory in expected range 
+# 05_05       extreme high dl at ses1, plausible given believable trajectory; overall trajectory above expected range
+# 07_07       7.4ms spike from ses 3-4, ses4 dl == ses0 dl despite not near ceiling and no large datediff, possible fatigue/guessing
+# 17_17       6.6ms & 7.9ms spikes in ses 3-4 from ses2, ses3 & 4 dls > ses0 dls despite no large datediff, possible fatigue/guessing
+# 24_27       small, steady increase dls from ses1 (6.0ms) to ses5 (11.7ms), ceiling effect
+# 43_40       5.8ms spike from ses 3-4, not too large spike and no large datediff, possible fatigue/guessing
+# 48_44       steady increase dls after ses0 (ses1 dl = 19.9ms, but eliminated for wireless headphones), 14.5ms dl increase from ses0 by ses3, 17.1ms by ses4, possible fatigue/guessing
+# 54_50       8.4ms spike from ses2 to ses3, corresponds to large datediff, overall elevated trajectory
+# 61_57       small, stead increase dls from ses3 (9.6ms) to ses5 (16.9ms), no large datediff, possible fatigue/guessing
+# 64_59       6.9ms spike from ses4 to ses5, ses5 dl > ses1 dl, no large datediff, possible fatigue/guessing
+# 71_66       extreme value at ses1, thereafter believable trajectory in expected range
+# 78__74      steady increase from ses1 (10.7ms) to ses5 (18.1ms), ceiling effect
+# 83_79       steady increase from ses3 (12.0ms) to ses5 (18.9ms), dls after ses4 > dl at ses0, possible fatigue/guessing & ceiling
+# 88_82       extreme value at ses1, thereafter believable trajectory
+
+# ### non-learners
+# no_change = barely improved or worsen in dl from start to finish, defined as < 3ms net change from ses0 or ses1 to ses_last
+# sig_worse = worsen in dl from start to finish, defined as >= 3ms net change from start to finish 
+
+
+temporal.now <- temporal %>%
+  mutate(outlier = case_when(participant == "07_07" & session == 0 ~ 1, # tag outliers where temporal DL > 1.5*IQR based on violin plot
+                             participant == "88_82" & session == 0 ~ 1,
+                             #participant == "14_14" & session == 0 ~ 1, # 13 = FD exposure, removed above
+                             #participant == "13_13" & session == 0 ~ 1, # 14 = FDT exposure, removed above
+                             
+                             participant == "03_03" & session == 1 ~ 1,
+                             participant == "05_05" & session == 1 ~ 1,
+                             participant == "07_07" & session == 1 ~ 1,
+                             participant == "54_50" & session == 1 ~ 1,
+                             participant == "62_61" & session == 1 ~ 1,
+                             participant == "66_62" & session == 1 ~ 1,
+                             participant == "71_66" & session == 1 ~ 1,
+                             
+                             participant == "05_05" & session == 2 ~ 1,
+                             participant == "54_50" & session == 2 ~ 1,
+                             
+                             participant == "05_05" & session == 3 ~ 1,
+                             participant == "48_44" & session == 3 ~ 1,
+                             participant == "54_50" & session == 3 ~ 1,
+                             participant == "63_58" & session == 3 ~ 1,
+                             
+                             participant == "05_05" & session == 4 ~ 1,
+                             participant == "07_07" & session == 4 ~ 1,
+                             participant == "48_44" & session == 4 ~ 1,
+                             participant == "54_50" & session == 4 ~ 1,
+                             participant == "63_58" & session == 4 ~ 1,
+                             
+                             participant == "05_05" & session == 5 ~ 1,
+                             participant == "48_44" & session == 5 ~ 1,
+                             participant == "63_58" & session == 5 ~ 1,
+                             participant == "78_74" & session == 5 ~ 1,
+                             participant == "83_79" & session == 5 ~ 1,
+                             
+                             TRUE ~ 0),
+         outlier = case_when(outlier == 1 & dl > 25 ~ 1, # only remove outliers when DL > 1.5*IQR & DL > 25 ms
+                             TRUE ~ 0),
+         dl = replace(dl, outlier == 1, NA), # replace outcomes with NA when outlier == 1
+         slope = replace(slope, outlier ==1, NA)) %>%
+  select(-c(outlier))
+
+# grab just the target tasks, not exposure
+target.now <- temporal.now %>%
+  filter(session != 0) %>%
+  mutate(session = droplevels(session))
+
+```
+
+## Summary stats for processed dataframe with outliers removed.
+```{r}
+target.now_descript <- target.now %>%
+  group_by(group, session) %>%
+  summarize(n = n(),
+            dl_m = mean(dl, na.rm = TRUE),
+            dl_sd = sd(dl, na.rm = TRUE),
+            dl_median = median(dl, na.rm = TRUE),
+            slope_m = mean(slope, na.rm = TRUE),
+            slope_sd = sd(slope, na.rm = TRUE),
+            slope_median = median(slope, na.rm = TRUE)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+```
+
+## Group means over time
+```{r}
+pd <- position_dodge(0.2) # jitter error bars left and right
+
+# Difference Limens
+dl_groupmeans <- ggplot(data = target.now_descript, aes(x = session, 
+                                 y = dl_m, 
+                                 group = group, 
+                                 shape = group,
+                                 colour = group)) + 
+  geom_line(size = 1) + 
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin=dl_m-dl_sd, 
+                    ymax=dl_m+dl_sd), 
+                width=.2,
+                size = 0.4,
+                position=pd) + # error bars = +/- 1sd
+  scale_colour_manual(values = c("Interval Exposure" = "#00cc00", 
+                                 "FDT" = "#3333ff",  
+                                 "FD" = "#ff0000", 
+                                 "Control" = "#000000")) +
+  scale_shape_manual(values = c("Interval Exposure" = 15, 
+                                "FDT" = 16,  
+                                "FD" = 17, 
+                                "Control" = 18)) +
+  scale_y_continuous(breaks = c(0,2,4,6,8,10,12,14)) +
+  coord_cartesian(ylim = c(0, 14)) + # restrict visible range
+  geom_vline(xintercept = 1.5, linetype="dashed", 
+            color = "black", size=1) + 
+  labs(x = "Session", y = "Difference Limen (ms)") +
+  labs(shape='Group', color='Group') + # legend title
+  theme_classic(base_size = 18)
+
+
+# Slopes
+slope_groupmeans <- ggplot(data = target.now_descript, aes(x = session, 
+                                 y = slope_m, 
+                                 group = group, 
+                                 shape = group,
+                                 colour = group)) + 
+  geom_line(size = 1) + 
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin=slope_m-slope_sd, 
+                    ymax=slope_m+slope_sd), 
+                width=.2,
+                size = 0.4,
+                position=pd) + # error bars = +/- 1sd
+  scale_colour_manual(values = c("Interval Exposure" = "#00cc00", 
+                                 "FDT" = "#3333ff",  
+                                 "FD" = "#ff0000", 
+                                 "Control" = "#000000")) +
+  scale_shape_manual(values = c("Interval Exposure" = 15, 
+                                "FDT" = 16,  
+                                "FD" = 17, 
+                                "Control" = 18)) +
+  scale_y_continuous(breaks = c(0, .05, .1, .15, .2, .25, .3, .35)) +
+  coord_cartesian(ylim = c(0, 0.35)) + # restrict visible range
+  geom_vline(xintercept = 1.5, linetype="dashed", 
+            color = "black", size=1) + 
+  labs(x = "Session", y = "Slope") +
+  labs(shape='Group', color='Group') + # legend title
+  theme_classic(base_size = 18)
+
+
+groupmeans <- ggarrange(dl_groupmeans, #+ rremove("xlab")
+                        slope_groupmeans,
+                    labels = c("A", "B"),
+                    ncol = 2, nrow = 1,
+                    common.legend = TRUE,
+                    legend = "bottom")
+```
+
+## Spaghetti plot. 
+```{r}
+# tag all outliers with reason for removal
+# 0 = completed; no data loss
+# 1 = data loss for participant because outlier in one or more sessions (n=8)
+# 2 = data loss for participant because tech error (n=6), withdraw (n=3) in one or more sessions
+
+
+target.now_spaghetti <- target.now %>%
+  mutate(outlier2 = case_when(participant == "03_03" ~ 1, # outlier
+                              participant == "05_05" ~ 2,
+                              participant == "07_07" ~ 1,
+                              participant == "48_44" ~ 1,
+                              participant == "54_50" ~ 2,
+                              participant == "62_61" ~ 1,
+                              participant == "66_62" ~ 1,
+                              participant == "71_66" ~ 1,
+                              participant == "06_06" ~ 1, # tech error, withdraw
+                              participant == "27_24" ~ 1,
+                              participant == "32_30" ~ 1,
+                              participant == "56_52" ~ 1,
+                              participant == "63_58" ~ 1,
+                              participant == "73_73" ~ 1,
+                              participant == "74_69" ~ 1,
+                              participant == "81_76" ~ 1,
+                              TRUE ~ 0), # non-outlier
+         outlier2 = recode_factor(outlier2,
+                                  "0" = "C",
+                                  "1" = "O/T/W",
+                                  "2" = "Same"))
+# C = complete; O/T/W = outlier, tech error, or withdraw; Same = 05_05 or 54_50, which are colored coded to reflect the same person
+# 05_05, 54_50 are same people, but appear as multiple people on graph.  need to color code to indicate as same person
+
+
+# overlay spaghetti plots with participants with isolated points (e.g. withdrew, tech error)
+target.now_spaghetti2<- target.now_spaghetti %>%
+  filter(participant == "05_05" |
+           participant == "06_06" |
+           participant == "48_44" |
+           participant == "54_50" | 
+           participant == "56_52")
+
+
+
+
+# spaghetti plot target task
+# Blue line is a locally weighted regression (lowess) that smooths over variability and gives a sense of overall or average trend across days.  Shaded area represents standard error.  X-axis represents time relative to hearing aid fitting.  X = 0 is hearing aid fitting.  Negative X values represent before hearing aid fitting.  
+
+dl_spaghetti <- ggplot(data = target.now_spaghetti, 
+       aes(x = session, 
+           y = dl, 
+           group = participant, 
+           colour = factor(outlier2))) + 
+  geom_line() + 
+  xlab("Session") + 
+  ylab("Difference Limen (ms)") + 
+  stat_summary(aes(group=group),
+               geom = "line",
+               fun=mean, # add mean line
+               colour="black",
+               linetype = "solid",
+               size = 1.5) +
+  facet_grid(.~group) + 
+  scale_colour_manual(name = "", values = c("C" = "#000000",
+                                            "O/T/W" = "#FF0000",
+                                            "Same" = "#0042FF")) +
+  geom_point(data = target.now_spaghetti2) +
+  geom_vline(xintercept = 1.5, linetype="dashed", color = "black", size=1) +
+  scale_y_continuous(breaks = c(0, 5, 10, 15, 20, 25)) +
+  coord_cartesian(ylim = c(0, 25)) + # restrict visible range
+  theme_bw(base_size = 22)
+
+
+slope_spaghetti <- ggplot(data = target.now_spaghetti, 
+       aes(x = session, 
+           y = slope, 
+           group = participant, 
+           colour = factor(outlier2))) + 
+  geom_line() + 
+  xlab("Session") + 
+  ylab("Slope") + 
+  stat_summary(aes(group=group),
+               geom = "line",
+               fun=mean, # add mean line
+               colour="black",
+               linetype = "solid",
+               size = 1.5) +
+  facet_grid(.~group) + 
+  scale_colour_manual(name = "", values = c("C" = "#000000",
+                                            "O/T/W" = "#FF0000",
+                                            "Same" = "#0042FF")) +
+  geom_point(data = target.now_spaghetti2) +
+  geom_vline(xintercept = 1.5, linetype="dashed", color = "black", size=1) +
+  scale_y_continuous(breaks = c(0, 0.1, 0.2, 0.3, 0.4, 0.5)) +
+  coord_cartesian(ylim = c(0, 0.5)) + # restrict visible range
+  theme_bw(base_size = 22)
+
+
+spaghetti <- ggarrange(dl_spaghetti, #+ rremove("xlab")
+                        slope_spaghetti,
+                    labels = c("A", "B"),
+                    ncol = 2, nrow = 1,
+                    common.legend = TRUE,
+                    legend = "bottom")
+```
+
+
+
+
+# 4A. Question 1: Does Exposure to Task Irrelevant Temporal Information Enhance FD Performance?
+## Descriptives
+```{r}
+freq.now_descript <- freq.now %>% 
+  group_by(group, session) %>%
+  summarize(n = n(),
+            dl_m = mean(dl, na.rm = TRUE),
+            dl_sd = sd(dl, na.rm = TRUE),
+            dl_median = median(dl, na.rm = TRUE),
+            slope_m = mean(slope, na.rm = TRUE),
+            slope_sd = sd(slope, na.rm = TRUE),
+            slope_median = median(slope, na.rm = TRUE))
+```
+
+## Assumptions for unpaired t test
+```{r}
+# boxpot with outliers dropped
+bxp <- ggboxplot(freq.now, x = "group", y = "dl", 
+  ylab = "frequency dl (Hz)", xlab = "group", add = "jitter")
+bxp
+
+bxp <- ggboxplot(freq.now, x = "group", y = "slope", 
+  ylab = "slope", xlab = "group", add = "jitter")
+bxp
+
+
+# shapiro-wilks test of normality by group
+freq.now %>%
+  group_by(group) %>%
+  shapiro_test(dl) # frequency dls are normal.  yay!
+ggqqplot(freq.now, x = "dl", facet.by = "group") # all points fall approximately along the 45 degree line, so we can assume normality
+
+freq.now %>%
+  group_by(group) %>%
+  shapiro_test(slope) # frequency slopes are normal.  yay!
+ggqqplot(freq.now, x = "slope", facet.by = "group") # all points fall approximately along the 45 degree line, so we can assume normality
+
+
+# levene's test of equality of variance
+freq.now %>%
+  levene_test(dl ~ group) # p = 0.266, there is no sig. diff between variances of the two groups.  
+
+freq.now %>%
+  levene_test(slope ~ group) # p = .621
+
+# Don't need Welch correction, although some literature suggests we should always use Welch correction.
+
+```
+
+## Compute the unpaired t test with Welch's correction
+```{r}
+pes <- function(t, df) {(t^2)/((t^2)+df)} # define formula to calculate effect size
+
+freq.now_model_dl <- freq.now %>%
+  t_test(dl ~ group) %>%
+  add_significance()
+freq.now_model_dl
+pes(freq.now_model_dl$statistic, freq.now_model_dl$df)
+
+
+freq.now_model_slope <- freq.now %>%
+  t_test(slope ~ group) %>%
+  add_significance()
+freq.now_model_slope
+pes(freq.now_model_slope$statistic, freq.now_model_slope$df)
+```
+
+
+
+# 4B. Question 2: What are the effects of exposure on target task learning (difference limens)?
+## Assumptions
+- normality
+- outliers: already removed outliers > 1.5*IQR if dl > 25ms
+- compound symmetry (homogeneity of variance & homogeneity of covariances)
+```{r}
+# assumption set up
+target.now_assumptions <- target.now %>%
+  select(participant, group, dl, session)
+
+random = rchisq(nrow(target.now_assumptions), 7)
+fake = lm(random ~ ., data = target.now_assumptions[ , -1]) # Fit a fake regression using real data.
+standardized = rstudent(fake) # standardized residuals
+fitted = scale(fake$fitted.values)
+
+# normality
+hist(standardized) # Positive skewed
+target.now %>%
+  group_by(group) %>%
+  shapiro_test(dl) # Not normal, but anovas are robust to deviations from normality. Let's proceed.
+ggqqplot(target.now, x = "dl")+ facet_grid(session ~ group) # Most points fall approximately along the 45 degree line.
+
+
+# linearity
+qqnorm(standardized) # linear residuals
+abline(0,1)
+
+# homogeneity
+plot(fitted, standardized) # plot fitted versus standardized values
+abline(0,0)
+abline(v=0) # Most points should be centered evenly around 0. There is some spread. Follow up with levene's test to check homogeneity.
+
+# homogeneity of variance (Levene's test)
+target.now %>%
+  group_by(session) %>%
+  levene_test(dl ~ group) # homogeneity of variances met, p > 0.05. Yay!
+
+# homogeneity of covariances (Box's M)
+box_m(target.now[, "dl", drop = FALSE], target.now$group) 
+```
+
+Repeat the assumption testing on slopes.
+```{r}
+# assumption set up
+target.now_assumptions <- target.now %>%
+  select(participant, group, slope, session)
+
+random = rchisq(nrow(target.now_assumptions), 7)
+fake = lm(random ~ ., data = target.now_assumptions[ , -1]) # Fit a fake regression using real data.
+standardized = rstudent(fake) # standardized residuals
+fitted = scale(fake$fitted.values)
+
+# normality
+hist(standardized) # Positive skewed
+target.now %>%
+  group_by(group) %>%
+  shapiro_test(slope) # Not normal, but anovas are robust to deviations from normality. Let's proceed.
+ggqqplot(target.now, x = "slope")+ facet_grid(session ~ group) # Most points fall approximately along the 45 degree line.
+
+
+# linearity
+qqnorm(standardized) # linear residuals
+abline(0,1)
+
+# homogeneity
+plot(fitted, standardized) # plot fitted versus standardized values
+abline(0,0)
+abline(v=0) # Most points should be centered evenly around 0. There is some spread. Follow up with levene's test to check homogeneity.
+
+# homogeneity of variance (Levene's test)
+target.now %>%
+  group_by(session) %>%
+  levene_test(slope ~ group) # homogeneity of variances met for most sessions.
+
+# homogeneity of covariances (Box's M)
+box_m(target.now[, "slope", drop = FALSE], target.now$group) 
+```
+
+
+
+## Computation.
+```{r}
+# 4x5 (group x session) mixed anova
+anova1 <- anova_test(data = target.now,
+           dv = dl,
+           wid = participant,
+           between = group,
+           within = session,
+           effect.size = "pes")
+anova1$ANOVA
+# There's a significant effect of session, but no interaction and no group effect.
+
+
+# marginal comparisons for main effect of time
+target.now %>%
+  pairwise_t_test(
+    dl ~ session, paired = FALSE, # cannot do paired = TRUE because not all participants had an observation for each session
+    p.adjust.method = "fdr")
+# Significant difference in DLs from Session 1 to Session 4 and Session 1 to Session 5, not significant after FDR adjustment.
+
+# n per group at each session
+target.now %>%
+  na.omit() %>%
+  group_by(group, session) %>%
+  summarise(n_distinct(participant))
+```
+
+Repeat computation on slopes.
+```{r}
+# 4x5 (group x session) mixed anova
+anova2 <- anova_test(data = target.now,
+           dv = slope,
+           wid = participant,
+           between = group,
+           within = session,
+           effect.size = "pes")
+anova2$ANOVA
+# There's a significant effect of session, but no interaction and no group effect.
+
+
+# marginal comparisons for main effect of time
+target.now %>%
+  pairwise_t_test(
+    slope ~ session, paired = FALSE, # cannot do paired = TRUE because not all participants had an observation for each session
+    p.adjust.method = "fdr")
+# Significant difference in DLs from Session 1 to Session 4 and Session 1 to Session 5, not significant after FDR adjustment.
+
+```
+
+
+
+# 4C. Question 3: What are the effects of exposure on target task learning (difference limens) when comparing session 1 to when each subject demonstrated best performance?
+
+Create the dataframes
+```{r}
+## select only session 1
+ses1 <- target.now %>%
+  filter(exp == 'target') %>%
+  filter(session == 1) %>%
+  mutate(session = droplevels(session))
+
+## select only session 5
+ses5 <- target.now %>%
+  filter(exp == 'target') %>%
+  filter(session == 5) %>%
+  mutate(session = droplevels(session))
+
+## select session with best DL for each subject, excluding session 1
+best_dl <- target.now %>%
+  filter(exp == 'target', session !=1) %>%
+  group_by(participant) %>%
+  slice(if(all(is.na(dl))) 1L else which.min(dl)) %>%
+  mutate(session = droplevels(session))
+
+## select session with best slope for each subject, excluding session 1
+best_slope <- target.now %>%
+  filter(exp == 'target', session !=1) %>%
+  group_by(participant) %>%
+  slice(if(all(is.na(slope))) 1L else which.max(slope)) %>%
+  mutate(session = droplevels(session))
+
+## combine dataframes
+ses1_best_dl <- rbind(ses1, best_dl) %>% # Best is defined by dl
+  mutate(session_cat = case_when(session == "1" ~ "Initial",
+                                 session != "1" ~ "Best"),
+         session_cat = as.factor(session_cat)) %>%
+  reorder_levels(session_cat, order = c("Initial", "Best"))
+
+ses1_best_slope <- rbind(ses1, best_slope) %>% # Best is defined by slope
+  mutate(session_cat = case_when(session == "1" ~ "Initial",
+                                 session != "1" ~ "Best"),
+         session_cat = as.factor(session_cat)) %>%
+  reorder_levels(session_cat, order = c("Initial", "Best"))
+
+ses1_final <- rbind(ses1, ses5) %>% # contains both DLs and slopes
+  mutate(session_cat = case_when(session == "1" ~ "Initial",
+                                 session == "5" ~ "Final"),
+         session_cat = as.factor(session_cat)) %>%
+  reorder_levels(session_cat, order = c("Initial", "Final"))
+```
+
+Computation.
+```{r}
+# 4x2 (group x session) mixed anova comparing initial to best dl
+anova3 <- anova_test(data = ses1_best_dl,
+           dv = dl,
+           wid = participant,
+           between = group,
+           within = session_cat,
+           effect.size = "pes")
+get_anova_table(anova3)
+
+# 4x2 (group x session) mixed anova comparing initial to final dl
+anova4 <- anova_test(data = ses1_final,
+           dv = dl,
+           wid = participant,
+           between = group,
+           within = session_cat,
+           effect.size = "pes")
+get_anova_table(anova4)
+
+
+
+# 4x2 (group x session) mixed anova comparing initial to best slope
+anova5 <- anova_test(data = ses1_best_slope,
+           dv = slope,
+           wid = participant,
+           between = group,
+           within = session_cat,
+           effect.size = "pes")
+get_anova_table(anova5)
+
+# 4x2 (group x session) mixed anova comparing initial to final slope
+anova6 <- anova_test(data = ses1_final,
+           dv = slope,
+           wid = participant,
+           between = group,
+           within = session_cat,
+           effect.size = "pes")
+get_anova_table(anova6)
+```
+
+Demographics.
+```{r}
+# combine Initial, Best, and Final sessions into the same dataframe
+ses1_best_final_dl <- rbind(ses1_best_dl, ses1_final) %>%
+  distinct() %>%
+  na.omit()
+
+ses1_best_final_slope <- rbind(ses1_best_slope, ses1_final) %>%
+  distinct() %>%
+  na.omit()
+
+
+# get some stats
+with(ses1_best_final_dl, tapply(dl, list(group, session_cat), mean, na.rm = TRUE)) # mean per group at each session_cat
+with(ses1_best_final_dl, tapply(dl, list(group, session_cat), sd, na.rm = TRUE)) # sd per group at each session_cat
+with(ses1_best_final_dl, tapply(dl, list(group, session_cat), length)) # n per group at each session_cat
+
+with(ses1_best_final_slope, tapply(slope, list(group, session_cat), mean, na.rm = TRUE)) # mean per group at each session_cat
+with(ses1_best_final_slope, tapply(slope, list(group, session_cat), sd, na.rm = TRUE)) # sd per group at each session_cat
+with(ses1_best_final_slope, tapply(slope, list(group, session_cat), length)) # n per group at each session_cat
+
+
+# demographics table with Initial, Best, Final sessions
+demo_all_dl <- ses1_best_final_dl %>%
+  group_by(group, session_cat) %>%
+  summarize(dl_mn = mean(dl, na.rm = TRUE),
+            dl_med = median(dl, na.rm = TRUE), 
+            dl_sd = sd(dl, na.rm = TRUE)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+
+demo_all_slope <- ses1_best_final_slope %>%
+  group_by(group, session_cat) %>%
+  summarize(slope_mn = mean(slope, na.rm = TRUE),
+            slope_med = median(slope, na.rm = TRUE), 
+            slope_sd = sd(slope, na.rm = TRUE)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+
+
+# simply count up the # of folks with best performance at which of the five sessions
+demo_best_dl <- target.now %>%
+  group_by(participant) %>%
+  slice(if(all(is.na(dl))) 1L else which.min(dl)) %>%
+  ungroup() %>%
+  na.omit() %>%
+  group_by(group, session) %>%
+  summarize(count = length(participant)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+
+demo_best_slope <- target.now %>%
+  group_by(participant) %>%
+  slice(if(all(is.na(dl))) 1L else which.max(slope)) %>%
+  ungroup() %>%
+  na.omit() %>%
+  group_by(group, session) %>%
+  summarize(count = length(participant)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+```
+
+Plots.
+```{r}
+# bar plot of Initial, Best, Final sessions
+dl_ibf <- ggplot(data = demo_all_dl, aes(x=group, y=dl_mn, fill = session_cat)) + 
+  geom_bar(stat="identity", position = "dodge") +
+  geom_errorbar(aes(ymin=dl_mn-dl_sd, ymax=dl_mn+dl_sd), width=.2,position=position_dodge(.9)) +
+  scale_fill_manual("Session",values = c("Initial" = "#AAAAAA", "Best" = "#777777", "Final" = "#444444")) +
+  scale_y_continuous(breaks = c(0,3,6,9,12,15)) + 
+  labs(y = "Difference Limen (ms)", x = "Group") +
+  coord_cartesian(ylim = c(0, 15)) + # restrict visible range
+  theme_pubr(base_size = 22)
+
+slope_ibf <- ggplot(data = demo_all_slope, aes(x=group, y=slope_mn, fill = session_cat)) + 
+  geom_bar(stat="identity", position = "dodge") +
+  geom_errorbar(aes(ymin=slope_mn-slope_sd, ymax=slope_mn+slope_sd), width=.2,position=position_dodge(.9)) +
+  scale_fill_manual("Session",values = c("Initial" = "#AAAAAA", "Best" = "#777777", "Final" = "#444444")) +
+  scale_y_continuous(breaks = c(0,.07,.14,.21,.28,.35)) + 
+  labs(y = "Slope", x = "Group") +
+  coord_cartesian(ylim = c(0, 0.35)) + # restrict visible range
+  theme_pubr(base_size = 22)
+
+
+# frequency histogram by group
+dl_best <- ggplot(demo_best_dl, aes(x = session, y = count, fill = group)) +
+  geom_bar(position="dodge", stat="identity") + 
+   scale_fill_manual("Group",values = c("Interval Exposure" = "#444444", 
+                                   "FDT" = "#777777", 
+                                   "FD" = "#AAAAAA",
+                                   "Control" = "#DDDDDD")) +
+  scale_y_continuous(breaks = c(0,2,4,6,8,10)) + 
+  coord_cartesian(ylim = c(0, 10)) + # restrict visible range
+  labs(y = "Best Session (Count)", x = "Session") +
+  theme_pubr(base_size = 22) 
+
+slope_best <- ggplot(demo_best_slope, aes(x = session, y = count, fill = group)) +
+  geom_bar(position="dodge", stat="identity") + 
+   scale_fill_manual("Group",values = c("Interval Exposure" = "#444444", 
+                                   "FDT" = "#777777", 
+                                   "FD" = "#AAAAAA",
+                                   "Control" = "#DDDDDD")) +
+  scale_y_continuous(breaks = c(0,2,4,6,8,10)) + 
+  coord_cartesian(ylim = c(0, 10)) + # restrict visible range
+  labs(y = "Best Session (Count)", x = "Session") +
+  theme_pubr(base_size = 22)
+
+# combine plots
+ibf <- ggarrange(dl_ibf,
+                 slope_ibf, # + rremove("xlab")
+                 labels = c("A", "B"),
+                 ncol = 2, nrow = 1,
+                 common.legend = TRUE,
+                 legend = "bottom")
+
+best_all <- ggarrange(ibf,
+          dl_best,
+          labels = c("","C","C"),
+          ncol = 1, nrow = 2,
+          legend = "bottom") # the counts plots for DL and slopes are identical, so let's just show one.
+
+
+```
+
+# 4D. Question 4: Do groups differ on delta difference limens (1-5) and slopes (5-1)?
+Calculate delta DLs (session 1 - session 5) and slopes (session 5 - session 1).
+```{r}
+demo_dl_diff <- target.now %>%
+  select(participant, group, session, exp, dl) %>%
+  filter(session == 1|session ==5) %>%
+  pivot_wider(names_from = c(session),
+              values_from = c(dl)) %>%
+  rename_with(~ c("dl_1", "dl_5")[which(c("1", "5") == .x)], .cols = c("1", "5")) %>%
+  mutate(dl_diff = dl_1 - dl_5) %>%
+  group_by(group) %>%
+  summarize(dl_1_mn = mean(dl_1, na.rm = TRUE),
+            dl_1_sd = sd(dl_1, na.rm = TRUE),
+            dl_5_mn = mean(dl_5, na.rm = TRUE),
+            dl_5_sd = sd(dl_5, na.rm = TRUE),
+            dl_diff_mn = mean(dl_diff, na.rm = TRUE),
+            dl_diff_med = median(dl_diff, na.rm = TRUE),
+            dl_diff_sd = sd(dl_diff, na.rm = TRUE)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+
+demo_slope_diff <- target.now %>%
+  select(participant, group, session, exp, slope) %>%
+  filter(session == 1|session ==5) %>%
+  pivot_wider(names_from = c(session),
+              values_from = c(slope)) %>%
+  rename_with(~ c("slope_1", "slope_5")[which(c("1", "5") == .x)], .cols = c("1", "5")) %>%
+  mutate(slope_diff = slope_5 - slope_1) %>%
+  group_by(group) %>%
+  summarize(slope_1_mn = mean(slope_1, na.rm = TRUE),
+            slope_1_sd = sd(slope_1, na.rm = TRUE),
+            slope_5_mn = mean(slope_5, na.rm = TRUE),
+            slope_5_sd = sd(slope_5, na.rm = TRUE),
+            slope_diff_mn = mean(slope_diff, na.rm = TRUE),
+            slope_diff_med = median(slope_diff, na.rm = TRUE),
+            slope_diff_sd = sd(slope_diff, na.rm = TRUE)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+```
+
+Plots
+```{r}
+dl_diff <- ggplot(data = demo_dl_diff, mapping = aes(x=group, y = dl_diff_mn, fill = group)) + 
+  geom_bar(stat='identity', position = "dodge") + 
+  geom_errorbar(aes(x=group, 
+                    ymin=dl_diff_mn-dl_diff_sd, ymax=dl_diff_mn+dl_diff_sd),
+                width=0.2, colour="black", alpha=0.9, size=1) + #ylim(-5, 10) +
+  scale_fill_manual("",values = c("Interval Exposure" = "#444444", 
+                                  "FDT" = "#777777", 
+                                  "FD" = "#AAAAAA",
+                                  "Control" = "#DDDDDD")) +
+  scale_y_continuous(breaks = c(-2,0,2,4,6,8)) +
+  coord_cartesian(ylim = c(-2, 8)) + # restrict visible range
+  labs(y = "\u394 Difference Limen (1 - 5)", x = "Group") + 
+  geom_hline(yintercept = 0, linetype = "solid", color = "#000000", size = 1) + 
+  theme_pubr(base_size = 18)
+
+slope_diff <- ggplot(data = demo_slope_diff, mapping = aes(x=group, y = slope_diff_mn, fill = group)) + 
+  geom_bar(stat='identity', position = "dodge") + 
+  geom_errorbar(aes(x=group, 
+                    ymin=slope_diff_mn-slope_diff_sd, ymax=slope_diff_mn+slope_diff_sd),
+                width=0.2, colour="black", alpha=0.9, size=1) + #ylim(-5, 10) +
+  scale_fill_manual("",values = c("Interval Exposure" = "#444444", 
+                                  "FDT" = "#777777", 
+                                  "FD" = "#AAAAAA",
+                                  "Control" = "#DDDDDD")) +
+  scale_y_continuous(breaks = c(-.03,0,.03,.06,.09,.12)) +
+  coord_cartesian(ylim = c(-.03, .12)) + # restrict visible range
+  labs(y = "\u394 Slope (5 - 1)", x = "Group") + 
+  geom_hline(yintercept = 0, linetype = "solid", color = "#000000", size = 1) + 
+  theme_pubr(base_size = 18)
+
+# combine plots
+diff_scores <- ggarrange(dl_diff,
+                 slope_diff, # + rremove("xlab")
+                 labels = c("A", "B"),
+                 ncol = 2, nrow = 1,
+                 common.legend = TRUE,
+                 legend = "bottom")
+```
+
+
+
+
+
+
+
+
+
