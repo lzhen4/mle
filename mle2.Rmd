@@ -37,24 +37,6 @@ library(ggstatsplot)
 library(rstantools)
 library(PMCMRplus)
 
-#library(stringr)
-#library(lme4)
-#library(lmerTest)
-#library(emmeans)
-#library(kableExtra)
-#options(knitr.table.format = "html")
-# library(ggrepel)
-# library(plotly)
-# library(EnvStats)
-# library(mice) # imputation
-# library(VIM)
-# library(naniar)
-# library(TeachingDemos)
-# library(mitml)
-# library(Rcpp) # mandatory for MICE
-# library(singcar)
-# library(lattice) # plotting
-
 # change font family
 library(extrafont)
 loadfonts(device = "win")
